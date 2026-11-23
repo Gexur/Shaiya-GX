@@ -112,27 +112,58 @@ func (a *App) drawItemDetails(def *sdata.Item, instance *proto.InventoryItem, co
 	// Item tooltips describe native and active socket bonuses together. Do not
 	// feed these locally derived values into the player's authoritative speeds.
 	var lapisAbsorption uint32
+	var bonuses lapisTooltipBonuses
+	if a.state != nil {
+		bonuses.enchantRules = a.state.EnchantRules
+	}
 	if instance != nil && itemtype.Real(def.Type) >= 1 && itemtype.Real(def.Type) <= 25 {
-		move, attack := int(def.Speed), int(def.AttackTime)
+		move, attackSpeed := int(def.Speed), int(def.AttackTime)
+		attackMin, attackAdd := uint32(def.Attack), uint32(def.AttackAdd)
+		hp, sp, mp := uint32(def.RecoveryHP), uint32(def.RecoverySP), uint32(def.RecoveryMP)
+		var stats [6]uint32
+		for k := range 6 {
+			stats[k] = uint32(def.Stats[k])
+		}
 		for i, id := range instance.Gems {
 			if id == 0 || inactive[i] {
 				continue
 			}
 			if g := a.itemsItem(30, id); g != nil {
 				lapisAbsorption += uint32(g.ExpAbsorb)
+				bonuses.def += uint32(g.Def)
+				bonuses.resist += uint32(g.Resist)
 				move += int(g.Speed)
-				attack += int(g.AttackTime)
+				attackSpeed += int(g.AttackTime)
+				attackMin += uint32(g.Attack)
+				attackAdd += uint32(g.AttackAdd)
+				hp += uint32(g.RecoveryHP)
+				sp += uint32(g.RecoverySP)
+				mp += uint32(g.RecoveryMP)
+				for k := range 6 {
+					stats[k] += uint32(g.Stats[k])
+				}
 			}
 		}
 		display.Speed = uint8(min(move, 255))
-		display.AttackTime = uint8(min(attack, 255))
+		display.AttackTime = uint8(min(attackSpeed, 255))
+		display.Attack = uint16(min(attackMin, 0xffff))
+		display.AttackAdd = uint16(min(attackAdd, 0xffff))
+		if !itemHasRestoration(def.Type) {
+			display.RecoveryHP = uint16(min(hp, 0xffff))
+			display.RecoverySP = uint16(min(sp, 0xffff))
+			display.RecoveryMP = uint16(min(mp, 0xffff))
+		}
+		for k := range 6 {
+			display.Stats[k] = uint16(min(stats[k], 0xffff))
+		}
+		bonuses.attackChanged = display.Attack != def.Attack || display.AttackAdd != def.AttackAdd
 	}
-	lines := itemDetailLines(&display, instance, count, price, func(id uint8) string {
+	lines := itemDetailLinesWithBonuses(&display, instance, count, price, func(id uint8) string {
 		if gem := a.itemsItem(30, id); gem != nil {
 			return gem.Name
 		}
 		return ""
-	}, a.msg)
+	}, bonuses, a.msg)
 
 	if a.showCatalogIDs {
 		lines = slices.Insert(lines, min(1, len(lines)), itemDetailLine{fmt.Sprintf("ID: %d %d", def.Type, def.TypeID), white})

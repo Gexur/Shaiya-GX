@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -320,5 +321,154 @@ func TestItemClassWarningUsesSysMsgOnlyForRestrictedEquipment(t *testing.T) {
 	}
 	if _, ok := a.itemClassWarning(&sdata.Item{Type: 25}); ok {
 		t.Fatal("consumable displayed an equipment warning")
+	}
+}
+
+func TestLapisTooltipTotalsWeaponAndStatBonuses(t *testing.T) {
+	a := inputApp()
+	a.msg = text.SysMsg{5191: "Attack power", 5208: "max."}
+	weapon := &sdata.Item{
+		Type: 1, TypeID: 1, Name: "Sword",
+		Attack: 50, AttackAdd: 15,
+		RecoveryHP: 100, RecoverySP: 50, RecoveryMP: 25,
+		Stats: [6]uint16{5, 0, 3, 0, 0, 2},
+	}
+	a.items = map[sdata.ItemKey]*sdata.Item{
+		{Type: 1, TypeID: 1}:  weapon,
+		{Type: 30, TypeID: 1}: {Type: 30, TypeID: 1, Attack: 8, Stats: [6]uint16{10, 4}},
+		{Type: 30, TypeID: 2}: {Type: 30, TypeID: 2, AttackAdd: 12, RecoveryHP: 200, RecoverySP: 75, RecoveryMP: 40, Stats: [6]uint16{0, 0, 7, 6, 5, 8}},
+	}
+	it := proto.InventoryItem{
+		Type: 1, TypeID: 1,
+		Craft: "04000000000003000000",
+		Gems:  [6]uint8{1, 2},
+	}
+	a.drawItemDetails(weapon, &it, 1, 0, 0, 1024, 768, "")
+
+	yellow := [4]float32{1, 1, 0, 1}
+	for _, want := range []itemDetailLine{
+		{"Attack power 58 - 85", yellow},
+		{"max. HP +300  {r}(+300){/r}", yellow},
+		{"max. SP +125", yellow},
+		{"max. MP +65", yellow},
+		{"STR +15  {r}(+4){/r}", yellow},
+		{"DEX +4", yellow},
+		{"REC +10", yellow},
+		{"INT +6", yellow},
+		{"WIS +5", yellow},
+		{"LUC +10", yellow},
+	} {
+		if !slices.Contains(a.tooltip, want) {
+			t.Fatalf("missing %+v in tooltip: %+v", want, a.tooltip)
+		}
+	}
+	if weapon.Attack != 50 || weapon.AttackAdd != 15 || weapon.Stats[0] != 5 || weapon.RecoveryHP != 100 {
+		t.Fatal("tooltip mutated cached item definition")
+	}
+}
+
+func TestLapisTooltipDefenseResistAndInactiveElement(t *testing.T) {
+	a := inputApp()
+	a.msg = text.SysMsg{5202: "Defense", 5203: "Resistance"}
+	armor := &sdata.Item{Type: 17, TypeID: 1, Name: "Armor", Attribute: 1, Def: 45, Resist: 10, Stats: [6]uint16{0, 0, 5}}
+	a.items = map[sdata.ItemKey]*sdata.Item{
+		{Type: 17, TypeID: 1}: armor,
+		{Type: 30, TypeID: 1}: {Type: 30, TypeID: 1, Def: 12, Stats: [6]uint16{0, 0, 9}},
+		{Type: 30, TypeID: 2}: {Type: 30, TypeID: 2, Resist: 20},
+		{Type: 30, TypeID: 3}: {Type: 30, TypeID: 3, Attribute: 2, Def: 99, Resist: 99, Stats: [6]uint16{99}},
+	}
+	it := proto.InventoryItem{Type: 17, TypeID: 1, Gems: [6]uint8{1, 2, 3}}
+	a.drawItemDetails(armor, &it, 1, 0, 0, 1024, 768, "")
+
+	for _, want := range []itemDetailLine{
+		{"Defense 45 +12", white},
+		{"Resistance 10 +20", white},
+		{"REC +14", [4]float32{1, 1, 0, 1}},
+	} {
+		if !slices.Contains(a.tooltip, want) {
+			t.Fatalf("missing %+v in tooltip: %+v", want, a.tooltip)
+		}
+	}
+	for _, row := range a.tooltip {
+		if strings.Contains(row.text, "STR +99") {
+			t.Fatalf("inactive elemental lapis leaked stats: %+v", row)
+		}
+	}
+
+	// Base Def/Resist 0 still surfaces active lapis defense/resistance.
+	zeroBase := &sdata.Item{Type: 16, TypeID: 2, Name: "Helmet"}
+	a.items[sdata.ItemKey{Type: 16, TypeID: 2}] = zeroBase
+	it = proto.InventoryItem{Type: 16, TypeID: 2, Gems: [6]uint8{1, 2}}
+	a.drawItemDetails(zeroBase, &it, 1, 0, 0, 1024, 768, "")
+	for _, want := range []itemDetailLine{{"Defense +12", white}, {"Resistance +20", white}} {
+		if !slices.Contains(a.tooltip, want) {
+			t.Fatalf("missing zero-base lapis row %+v in %+v", want, a.tooltip)
+		}
+	}
+
+	// Cloak emblem bytes in Gems must never be treated as lapis stats.
+	cloak := &sdata.Item{Type: 24, TypeID: 1, Name: "Cloak", Def: 5}
+	it = proto.InventoryItem{Type: 24, TypeID: 1, Gems: [6]uint8{1, 2}}
+	a.drawItemDetails(cloak, &it, 1, 0, 0, 1024, 768, "")
+	if !slices.Contains(a.tooltip, itemDetailLine{"Defense 5", white}) {
+		t.Fatalf("cloak emblem bytes modified tooltip: %+v", a.tooltip)
+	}
+}
+
+func TestWeaponEnchantTooltipUsesDefaultAndServerRulesWithLapis(t *testing.T) {
+	a := inputApp()
+	a.msg = text.SysMsg{5191: "Attack power"}
+	weapon := &sdata.Item{
+		Type: 1, TypeID: 1, Name: "Sword",
+		Attack: 50, AttackAdd: 15,
+		Server: 6, RequiredStats: [6]uint16{0, 0, 0, 0, 3},
+	}
+	a.items = map[sdata.ItemKey]*sdata.Item{
+		{Type: 1, TypeID: 1}:  weapon,
+		{Type: 30, TypeID: 1}: {Type: 30, TypeID: 1, Attack: 8},
+		{Type: 30, TypeID: 2}: {Type: 30, TypeID: 2, AttackAdd: 12},
+	}
+	it := proto.InventoryItem{
+		Type: 1, TypeID: 1,
+		Craft: "00000000000000000003", // +3 default bonus = 21
+		Gems:  [6]uint8{1, 2},
+	}
+	yellow := [4]float32{1, 1, 0, 1}
+	a.drawItemDetails(weapon, &it, 1, 0, 0, 1024, 768, "")
+	if !slices.Contains(a.tooltip, itemDetailLine{"Attack power 79 - 106", yellow}) {
+		t.Fatalf("expected weapon +3 + lapis attack 79 - 106, got %+v", a.tooltip)
+	}
+
+	rules := proto.EnchantRules{MaxLevel: 49}
+	rules.WeaponBonus[3] = 50
+	rules.WeaponBonus[49] = 900
+	if _, err := a.state.Apply(proto.EnchantRulesPacket(rules)); err != nil {
+		t.Fatal(err)
+	}
+	a.drawItemDetails(weapon, &it, 1, 0, 0, 1024, 768, "")
+	if !slices.Contains(a.tooltip, itemDetailLine{"Attack power 108 - 135", yellow}) {
+		t.Fatalf("expected server WeaponBonus[3]=50 attack 108 - 135, got %+v", a.tooltip)
+	}
+
+	it.Craft = "00000000000000000049"
+	it.Gems = [6]uint8{}
+	a.drawItemDetails(weapon, &it, 1, 0, 0, 1024, 768, "")
+	if !slices.Contains(a.tooltip, itemDetailLine{"Attack power 950 - 965", yellow}) {
+		t.Fatalf("expected server WeaponBonus[49]=900 attack 950 - 965, got %+v", a.tooltip)
+	}
+
+	// Configured zero bonus replaces hardcoded fallback, leaving non-lapis attack white.
+	a.state.EnchantRules.WeaponBonus[3] = 0
+	it.Craft = "00000000000000000003"
+	a.drawItemDetails(weapon, &it, 1, 0, 0, 1024, 768, "")
+	if !slices.Contains(a.tooltip, itemDetailLine{"Attack power 50 - 65", white}) {
+		t.Fatalf("expected zero configured WeaponBonus attack 50 - 65 white, got %+v", a.tooltip)
+	}
+
+	// Armor enchant encoding (>= 50) never adds weapon attack bonus.
+	it.Craft = "00000000000000000053"
+	a.drawItemDetails(weapon, &it, 1, 0, 0, 1024, 768, "")
+	if !slices.Contains(a.tooltip, itemDetailLine{"Attack power 50 - 65", white}) {
+		t.Fatalf("armor enchant encoding modified weapon attack: %+v", a.tooltip)
 	}
 }

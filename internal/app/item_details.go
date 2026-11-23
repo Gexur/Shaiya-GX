@@ -107,9 +107,32 @@ func (a *App) itemClassWarning(def *sdata.Item) (itemDetailLine, bool) {
 	return itemDetailLine{label, [4]float32{1, 0, 0, 1}}, true
 }
 
+type lapisTooltipBonuses struct {
+	attackChanged bool
+	def, resist   uint32
+	enchantRules  *proto.EnchantRules
+}
+
+func formatDefenseBonusLine(label string, base uint16, bonus uint32) string {
+	switch {
+	case base > 0 && bonus > 0:
+		return fmt.Sprintf("%s %d +%d", label, base, bonus)
+	case base > 0:
+		return fmt.Sprintf("%s %d", label, base)
+	case bonus > 0:
+		return fmt.Sprintf("%s +%d", label, bonus)
+	default:
+		return ""
+	}
+}
+
 // Native 0x4a3950 distinguishes equipment bonuses from consumable restoration.
 // SysMsg owns labels; inline description controls remain archive data.
 func itemDetailLines(def *sdata.Item, instance *proto.InventoryItem, count uint16, price string, gemName func(uint8) string, messages ...text.SysMsg) []itemDetailLine {
+	return itemDetailLinesWithBonuses(def, instance, count, price, gemName, lapisTooltipBonuses{}, messages...)
+}
+
+func itemDetailLinesWithBonuses(def *sdata.Item, instance *proto.InventoryItem, count uint16, price string, gemName func(uint8) string, bonuses lapisTooltipBonuses, messages ...text.SysMsg) []itemDetailLine {
 	instance = withoutCloakGems(instance)
 	label := func(id int) string {
 		if len(messages) > 0 {
@@ -145,15 +168,18 @@ func itemDetailLines(def *sdata.Item, instance *proto.InventoryItem, count uint1
 		add(fmt.Sprintf("%s +%d", label(5209), def.Speed), [4]float32{1, 1, 0, 1})
 	}
 
-	if def.Attack != 0 || def.AttackAdd != 0 {
-		add(fmt.Sprintf("%s %d - %d", label(5191), def.Attack, uint32(def.Attack)+uint32(def.AttackAdd)), white)
+	enchantAttack := itemWeaponEnchantAttack(def, instance, bonuses.enchantRules)
+	if def.Attack != 0 || def.AttackAdd != 0 || enchantAttack != 0 {
+		minAttack := uint32(def.Attack) + enchantAttack
+		maxAttack := minAttack + uint32(def.AttackAdd)
+		color := white
+		if bonuses.attackChanged || enchantAttack != 0 {
+			color = [4]float32{1, 1, 0, 1}
+		}
+		add(fmt.Sprintf("%s %d - %d", label(5191), minAttack, maxAttack), color)
 	}
-	if def.Def > 0 {
-		add(fmt.Sprintf("%s %d", label(5202), def.Def), white)
-	}
-	if def.Resist > 0 {
-		add(fmt.Sprintf("%s %d", label(5203), def.Resist), white)
-	}
+	add(formatDefenseBonusLine(label(5202), def.Def, bonuses.def), white)
+	add(formatDefenseBonusLine(label(5203), def.Resist, bonuses.resist), white)
 	if equipment || def.Type == 30 {
 		if absorption := itemAbsorption(def, instance); absorption > 0 {
 			add(fmt.Sprintf("%s %d", label(485), absorption), white)
@@ -276,25 +302,50 @@ func itemHasRestoration(typ uint8) bool {
 	return false
 }
 
+var defaultWeaponEnchantAttack = [21]uint32{0, 7, 14, 21, 31, 41, 51, 64, 77, 90, 106, 122, 138, 157, 176, 195, 217, 239, 261, 286, 311}
+
+func itemEnchantEligibility(def *sdata.Item, instance *proto.InventoryItem) (craftValues, byte, bool) {
+	rt := itemtype.Real(def.Type)
+	if rt < 1 || rt > 25 || itemHasRestoration(def.Type) || instance == nil || def.Server == 0 || def.RequiredStats[4] == 0 || def.RequiredStats[4] >= 100 {
+		return craftValues{}, 0, false
+	}
+	craft, ok := parseCraftValues(instance.Craft)
+	if !ok || craft.enchant == 0 {
+		return craftValues{}, 0, false
+	}
+	raw := strings.TrimRight(instance.Craft, " ")
+	return craft, raw[18], true
+}
+
+func itemWeaponEnchantAttack(def *sdata.Item, instance *proto.InventoryItem, rules ...*proto.EnchantRules) uint32 {
+	if rt := itemtype.Real(def.Type); rt < 1 || rt > 15 {
+		return 0
+	}
+	craft, highDigit, ok := itemEnchantEligibility(def, instance)
+	if !ok || highDigit >= '5' {
+		return 0
+	}
+	if len(rules) > 0 && rules[0] != nil {
+		return rules[0].WeaponBonus[craft.enchant]
+	}
+	if int(craft.enchant) < len(defaultWeaponEnchantAttack) {
+		return defaultWeaponEnchantAttack[craft.enchant]
+	}
+	return 0
+}
+
 // itemAbsorption combines native Exp and eligible armor enchantment. Linked
 // lapis are added by drawItemDetails; the craft level remains in the item name.
 func itemAbsorption(def *sdata.Item, instance *proto.InventoryItem, rules ...*proto.EnchantRules) uint32 {
 	total := uint32(def.ExpAbsorb)
-	rt := itemtype.Real(def.Type)
-	if rt < 1 || rt > 25 || itemHasRestoration(def.Type) || instance == nil || def.Server == 0 || def.RequiredStats[4] == 0 || def.RequiredStats[4] >= 100 {
+	craft, highDigit, ok := itemEnchantEligibility(def, instance)
+	if !ok || highDigit < '5' {
 		return total
 	}
-	craft, ok := parseCraftValues(instance.Craft)
-	if !ok || craft.enchant == 0 {
-		return total
-	}
-	raw := strings.TrimRight(instance.Craft, " ")
-	if raw[18] >= '5' {
-		if len(rules) > 0 && rules[0] != nil {
-			total += rules[0].ArmorBonus[craft.enchant]
-		} else if craft.enchant <= 20 {
-			total += uint32(craft.enchant) * 5
-		}
+	if len(rules) > 0 && rules[0] != nil {
+		total += rules[0].ArmorBonus[craft.enchant]
+	} else if craft.enchant <= 20 {
+		total += uint32(craft.enchant) * 5
 	}
 	return total
 }
