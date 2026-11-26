@@ -58,6 +58,14 @@ func TestEquipmentMoveSoundType(t *testing.T) {
 		{"bag rearrangement", []proto.InventoryItem{weapon}, emptyBag, otherBag, 0},
 		{"same slot refresh", []proto.InventoryItem{replacement}, equipped, equipped, 0},
 		{"duplicate equip reply", []proto.InventoryItem{equipped}, emptyBag, equipped, 0},
+		{"swap identical equipped items", []proto.InventoryItem{
+			{Bag: 1, Slot: 2, Type: 17, TypeID: 12, Quality: 100, Count: 1},
+			{Bag: 0, Slot: 1, Type: 17, TypeID: 12, Quality: 100, Count: 1},
+		}, proto.InventoryItem{Bag: 1, Slot: 2, Type: 17, TypeID: 12, Quality: 100, Count: 1}, proto.InventoryItem{Bag: 0, Slot: 1, Type: 17, TypeID: 12, Quality: 100, Count: 1}, 17},
+		{"swap identical equipment slots", []proto.InventoryItem{
+			{Bag: 0, Slot: 9, Type: 22, TypeID: 5, Count: 1},
+			{Bag: 0, Slot: 10, Type: 22, TypeID: 5, Count: 1},
+		}, proto.InventoryItem{Bag: 0, Slot: 9, Type: 22, TypeID: 5, Count: 1}, proto.InventoryItem{Bag: 0, Slot: 10, Type: 22, TypeID: 5, Count: 1}, 22},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := inputApp()

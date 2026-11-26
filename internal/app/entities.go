@@ -146,7 +146,7 @@ func (a *App) prepareRemotePlayers() {
 			}
 			// Cosmetics can replace the model, but must not reset which
 			// gestures have already been consumed for this entity.
-			if !e.Dead && !e.Mounted {
+			if !e.Dead {
 				actor.PreservePosture(cached.character)
 			}
 			cached.character, cached.shape = actor, sh

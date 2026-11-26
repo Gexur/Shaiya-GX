@@ -248,3 +248,92 @@ func TestIdleVariationBlendsBothDirectionsAndYieldsToMovement(t *testing.T) {
 		t.Fatal("running did not interrupt the variation from the visible pose")
 	}
 }
+
+func TestPreservePostureKeepsAnimationAcrossEquipmentRebuild(t *testing.T) {
+	assets := NewAssets(nil)
+	idle := poseTestClip(2)
+	walk := poseTestClip(2)
+	run := poseTestClip(2)
+	swordRun := poseTestClip(2)
+	assets.clips["ani:character/human/ani/humf_000_normal.ani"] = idle
+	assets.clips["ani:character/human/ani/humf_001_walk.ani"] = walk
+	assets.clips["ani:character/human/ani/humf_002_run.ani"] = run
+	assets.clips["ani:character/human/ani/humf_040_onrun.ani"] = swordRun
+	actions := make([]model.Action, 41)
+	actions[40].Name = "humf_040_onrun.ANI"
+	actions[10] = model.Action{Name: "humf_001_walk.ANI", Mode: 2}
+
+	t.Run("locomotion keeps clip, time and move rate", func(t *testing.T) {
+		for _, clipName := range []string{"001_walk", "002_run"} {
+			prev := &Character{assets: assets, folder: "Human", prefix: "humf", actionsLoaded: true, actions: actions}
+			prev.SetSpeedTiers(5, 5, 0, false)
+			prev.SetClip(clipName)
+			prev.Update(.35)
+
+			rebuilt := &Character{assets: assets, folder: "Human", prefix: "humf", actionsLoaded: true, actions: actions}
+			rebuilt.SetSpeedTiers(5, 5, 0, false)
+			rebuilt.SetClip("000_normal")
+			rebuilt.PreservePosture(prev)
+
+			if rebuilt.clip != prev.clip || rebuilt.clipFile != prev.clipFile || rebuilt.Time != prev.Time {
+				t.Fatalf("%s: clip/time not preserved: got (%v, %q, %v) want (%v, %q, %v)",
+					clipName, rebuilt.clip, rebuilt.clipFile, rebuilt.Time, prev.clip, prev.clipFile, prev.Time)
+			}
+			if rebuilt.rate.kind != rateMove || rebuilt.eventPrev != prev.eventPrev || rebuilt.eventCur != prev.eventCur {
+				t.Fatalf("%s: rate/event cursor not preserved", clipName)
+			}
+			beforeTime := rebuilt.Time
+			rebuilt.SetClip(clipName)
+			if rebuilt.Time != beforeTime || rebuilt.blendLeft != 0 {
+				t.Fatalf("%s: SetClip restarted animation after rebuild: time=%v->%v blend=%v",
+					clipName, beforeTime, rebuilt.Time, rebuilt.blendLeft)
+			}
+		}
+	})
+
+	t.Run("active action, cast and blend are preserved", func(t *testing.T) {
+		prev := &Character{assets: assets, folder: "Human", prefix: "humf", actionsLoaded: true, actions: actions}
+		prev.SetClip("000_normal")
+		if !prev.PlayCast(10, 1.5) {
+			t.Fatal("failed to start cast action")
+		}
+		prev.Update(clipBlendDuration / 2)
+
+		rebuilt := &Character{assets: assets, folder: "Human", prefix: "humf"}
+		rebuilt.SetClip("000_normal")
+		rebuilt.PreservePosture(prev)
+
+		if !rebuilt.PlayingAction(10) || rebuilt.castLeft != prev.castLeft || rebuilt.blendLeft != prev.blendLeft || len(rebuilt.blendFrom) != len(prev.blendFrom) {
+			t.Fatal("active action/cast/blend state was lost on rebuild")
+		}
+	})
+
+	t.Run("weapon swap blends smoothly into new run clip", func(t *testing.T) {
+		prev := &Character{assets: assets, folder: "Human", prefix: "humf", actionsLoaded: true, actions: actions}
+		prev.SetClip("002_run")
+		prev.Update(.3)
+		last := prev.finals()[1]
+
+		rebuilt := &Character{assets: assets, folder: "Human", prefix: "humf", weaponType: 1, actionsLoaded: true, actions: actions}
+		rebuilt.SetClip("000_normal")
+		rebuilt.PreservePosture(prev)
+		rebuilt.SetClip("002_run")
+
+		if rebuilt.clip != swordRun || rebuilt.blendLeft != clipBlendDuration || rebuilt.finals()[1] != last {
+			t.Fatal("weapon change did not blend from previous run pose into new weapon run clip")
+		}
+	})
+
+	t.Run("incompatible body does not copy clip", func(t *testing.T) {
+		prev := &Character{assets: assets, folder: "Human", prefix: "humf"}
+		prev.SetClip("001_walk")
+		prev.Update(.2)
+
+		disguise := &Character{assets: assets, folder: "Elf", prefix: "elf"}
+		disguise.clip = idle
+		disguise.PreservePosture(prev)
+		if disguise.clip != idle || disguise.Time != 0 {
+			t.Fatal("incompatible body copied previous clip")
+		}
+	})
+}

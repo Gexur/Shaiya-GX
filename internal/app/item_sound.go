@@ -17,6 +17,15 @@ func itemSoundName(itemType uint8) string {
 	return fmt.Sprintf("ui_armor%03d.ogg", itemSoundTable[itemType])
 }
 
+func sameItemValue(a, b proto.InventoryItem) bool {
+	if a.Type == 0 || a.Count == 0 {
+		return false
+	}
+	a.Bag, a.Slot = 0, 0
+	b.Bag, b.Slot = 0, 0
+	return a == b
+}
+
 // Compare the confirmed slots with inventory before applying the packet.
 // World also echoes both slots unchanged when it refuses a move.
 func (a *App) equipmentMoveSoundType(p []byte) uint8 {
@@ -25,7 +34,8 @@ func (a *App) equipmentMoveSoundType(p []byte) uint8 {
 		return 0
 	}
 	// Prefer the destination equipment slot when a move changes both.
-	for _, after := range [2]proto.InventoryItem{moved[1], moved[0]} {
+	for _, pair := range [2][2]proto.InventoryItem{{moved[1], moved[0]}, {moved[0], moved[1]}} {
+		after, other := pair[0], pair[1]
 		if after.Bag != 0 {
 			continue
 		}
@@ -34,7 +44,7 @@ func (a *App) equipmentMoveSoundType(p []byte) uint8 {
 			if before.Type != 0 {
 				return before.Type
 			}
-		} else if after != before {
+		} else if after != before || sameItemValue(after, other) {
 			return after.Type
 		}
 	}

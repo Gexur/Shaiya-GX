@@ -1166,7 +1166,7 @@ func (a *App) refreshSelf(v *worldView) {
 	}
 	if ch != nil && a.state.Self.Dead {
 		ch.PlayAction(9, true)
-	} else if !a.state.Self.Mounted {
+	} else {
 		ch.PreservePosture(v.self)
 	}
 	v.self = ch
