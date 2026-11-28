@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"cmp"
 	"math"
 	"slices"
 
@@ -294,6 +295,15 @@ func (b *CharacterBatch) flush(k *render.Skinner, s *render.Scene3D) {
 		b.instances = append(b.instances, instances...)
 		b.buckets[i] = instances[:0]
 	}
+	slices.SortStableFunc(b.groups, func(a, b render.SkinGroup) int {
+		if a.TwoSided != b.TwoSided {
+			if !a.TwoSided {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(a.Mesh.IndexType(), b.Mesh.IndexType())
+	})
 	ambient := s.CharacterAmbient
 	if ambient <= 0 {
 		ambient = .8

@@ -170,6 +170,9 @@ func (m *SkinMesh) Delete() {
 	*m = SkinMesh{}
 }
 
+// IndexType reports the GL element index type (UNSIGNED_SHORT or UNSIGNED_INT).
+func (m *SkinMesh) IndexType() uint32 { return m.indexType }
+
 // Skinner draws skinned meshes with the shared fragment stage.
 type Skinner struct {
 	uniformWorld, uniformView, uniformVP               M4
