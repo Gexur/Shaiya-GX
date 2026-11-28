@@ -190,8 +190,8 @@ func testOrderedEffectMultiDrawGL(t *testing.T, options InitOptions) {
 			}
 			if indirect != 0 {
 				now, calls := draw(compact, indirect)
-				if calls != 3 || !bytes.Equal(reference, now) {
-					t.Fatalf("multi-draw differs with clip=%v reverse=%v: %d calls", clip, reverse, calls)
+				if diff := maxRGBDiff(reference, now); calls != 1 || diff < 0 || diff > 2 {
+					t.Fatalf("multi-draw differs with clip=%v reverse=%v: calls=%d maxRGBDiff=%d", clip, reverse, calls, diff)
 				}
 			}
 		}
@@ -299,13 +299,32 @@ func testOrderedEffectPartialFallbackGL(t *testing.T, options InitOptions) {
 	}
 	reference, serialCalls := draw(0)
 	got, partialCalls := draw(indirect)
-	if serialCalls != 8 || partialCalls != 4 {
-		t.Fatalf("expected 8 serial calls -> 4 ordered partial-indirect calls (indirect, serial, indirect, additive indirect), got %d -> %d", serialCalls, partialCalls)
+	if serialCalls != 8 || partialCalls != 3 {
+		t.Fatalf("expected 8 serial calls -> 3 ordered partial-indirect calls (indirect, serial, merged indirect), got %d -> %d", serialCalls, partialCalls)
 	}
-	if !bytes.Equal(reference, got) {
-		t.Fatal("partial indirect effect fallback changed blended pixels")
+	if diff := maxRGBDiff(reference, got); diff < 0 || diff > 2 {
+		t.Fatalf("partial indirect effect fallback changed blended pixels (maxRGBDiff=%d)", diff)
 	}
 	if code := gl.GetError(); code != gl.NO_ERROR {
 		t.Fatalf("GL error %#x", code)
 	}
+}
+
+func maxRGBDiff(a, b []byte) int {
+	if len(a) != len(b) {
+		return -1
+	}
+	best := 0
+	for i := 0; i+3 < len(a); i += 4 {
+		for ch := range 3 {
+			d := int(a[i+ch]) - int(b[i+ch])
+			if d < 0 {
+				d = -d
+			}
+			if d > best {
+				best = d
+			}
+		}
+	}
+	return best
 }

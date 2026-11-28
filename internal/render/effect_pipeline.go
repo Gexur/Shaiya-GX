@@ -35,6 +35,9 @@ out vec2 vUV;
 #ifndef DRAW_MATERIAL_ATTRIBUTE
 out vec4 vColor;
 #endif
+#ifdef EFFECT_INDIRECT
+flat out uint vBlendMode;
+#endif
 void main() {
 	#if defined(DRAW_MATERIAL_ATTRIBUTE)
 	uvec4 draw = drawMaterial;
@@ -47,7 +50,8 @@ void main() {
 	#endif
 	#ifdef EFFECT_INDIRECT
 	bool hasKeys = draw.z != 0u;
-	int keyVertex = int(draw.z)-1 + gl_VertexID - int(draw.w);
+	vBlendMode = draw.w >> 30u;
+	int keyVertex = int(draw.z)-1 + gl_VertexID - int(draw.w & 0x3fffffffu);
 	#else
 	int index = instanceBase + gl_InstanceID;
 	int keyVertex = gl_VertexID;
@@ -82,16 +86,28 @@ in vec2 vUV;
 #ifndef DRAW_MATERIAL_ATTRIBUTE
 in vec4 vColor;
 #endif
+#ifdef EFFECT_INDIRECT
+flat in uint vBlendMode;
+#endif
 out vec4 frag;
 void main() {
 	#ifdef EFFECT_INDIRECT
+	vec4 c;
 	#if defined(DRAW_MATERIAL_ATTRIBUTE)
-	frag = sampleDrawTexture(vTexture, vUV) * vColor;
+	c = sampleDrawTexture(vTexture, vUV) * vColor;
 	#elif defined(EFFECT_BOUND)
-	frag = texture(effectTextures[vTexture.x], vUV) * vColor;
+	c = texture(effectTextures[vTexture.x], vUV) * vColor;
 	#else
-	frag = texture(sampler2D(vTexture), vUV) * vColor;
+	c = texture(sampler2D(vTexture), vUV) * vColor;
 	#endif
+	if (vBlendMode == 1u) {
+		c.rgb *= c.a;
+	} else if (vBlendMode == 2u) {
+		c = vec4(c.rgb * c.a, 0.0);
+	} else if (vBlendMode == 3u) {
+		c.a = 0.0;
+	}
+	frag = c;
 	#else
 	frag = texture(tex0, vUV) * vColor;
 	#endif

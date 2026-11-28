@@ -120,19 +120,20 @@ func (p *effectIndirect) plan(draws []queuedEffect) bool {
 			}
 		}
 		indexType := draw.mesh.indexType
-		if n := len(p.runs); n == 0 || p.runs[n-1].serial >= 0 || p.runs[n-1].indexType != indexType || p.runs[n-1].src != draw.src || p.runs[n-1].dst != draw.dst {
-			p.newRun(draw)
+		runSrc, runDst, blendMode := effectPremulBlend(draw.src, draw.dst)
+		if n := len(p.runs); n == 0 || p.runs[n-1].serial >= 0 || p.runs[n-1].indexType != indexType || p.runs[n-1].src != runSrc || p.runs[n-1].dst != runDst {
+			p.newRun(indexType, runSrc, runDst)
 		}
 		if p.bound {
 			slot, ok := p.runs[len(p.runs)-1].textures.slot(view.id, drawTextureLimit)
 			if !ok {
-				p.newRun(draw)
+				p.newRun(indexType, runSrc, runDst)
 				slot, _ = p.runs[len(p.runs)-1].textures.slot(view.id, drawTextureLimit)
 			}
 			textureRef = uint64(slot)
 		}
 		command := indexedDrawCommand{uint32(draw.mesh.Count), uint32(draw.end - draw.first), uint32(loc.index / int(draw.mesh.indexBytes)), uint32(loc.vertex), uint32(draw.first)}
-		material := [4]uint32{uint32(textureRef), uint32(textureRef >> 32), loc.keys, uint32(loc.vertex)}
+		material := [4]uint32{uint32(textureRef), uint32(textureRef >> 32), loc.keys, uint32(loc.vertex) | blendMode<<30}
 		if p.materialAttribute {
 			material[1] = command.baseInstance
 			command.baseInstance = uint32(len(p.materials))
@@ -151,8 +152,21 @@ func (p *effectIndirect) plan(draws []queuedEffect) bool {
 	return true
 }
 
-func (p *effectIndirect) newRun(draw queuedEffect) {
-	run := effectIndirectRun{first: len(p.commands), serial: -1, indexType: draw.mesh.indexType, src: draw.src, dst: draw.dst}
+func effectPremulBlend(src, dst uint32) (runSrc, runDst, mode uint32) {
+	switch {
+	case src == gl.SRC_ALPHA && dst == gl.ONE_MINUS_SRC_ALPHA:
+		return gl.ONE, gl.ONE_MINUS_SRC_ALPHA, 1
+	case src == gl.SRC_ALPHA && dst == gl.ONE:
+		return gl.ONE, gl.ONE_MINUS_SRC_ALPHA, 2
+	case src == gl.ONE && dst == gl.ONE:
+		return gl.ONE, gl.ONE_MINUS_SRC_ALPHA, 3
+	default:
+		return src, dst, 0
+	}
+}
+
+func (p *effectIndirect) newRun(indexType, src, dst uint32) {
+	run := effectIndirectRun{first: len(p.commands), serial: -1, indexType: indexType, src: src, dst: dst}
 	if len(p.runs) < cap(p.runs) {
 		i := len(p.runs)
 		p.runs = p.runs[:i+1]
