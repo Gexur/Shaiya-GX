@@ -141,7 +141,10 @@ func (p *effectIndirect) plan(draws []queuedEffect) bool {
 		p.materials = append(p.materials, material)
 		p.runs[len(p.runs)-1].count++
 	}
-	if len(p.commands) == 0 || len(p.runs) >= len(draws) {
+	// Many fragmented MultiDrawElementsIndirect runs interleaved with blend or
+	// program state changes hit a steep GPU slow path on Windows AMD OpenGL
+	// drivers; fall back to instanced draws when average batching per run is low.
+	if len(p.commands) == 0 || len(p.runs) >= len(draws) || (len(p.runs) > 16 && len(p.commands) < len(p.runs)*8) {
 		if p.reclaimDead {
 			p.releaseGeometry()
 			p.reclaimDead = false
